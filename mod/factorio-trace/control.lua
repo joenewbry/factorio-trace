@@ -249,15 +249,10 @@ end)
 local linked = {
   "build",
   "mine",
-  "shoot-enemy",
-  "shoot-selected",
   "rotate",
   "reverse-rotate",
-  "pick-items",
-  "drop-cursor",
   "fast-entity-transfer",
   "fast-entity-split",
-  "open-item",
   "copy-entity-settings",
   "paste-entity-settings",
 }
