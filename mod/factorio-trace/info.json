@@ -1,0 +1,9 @@
+{
+  "name": "factorio-trace",
+  "version": "0.1.0",
+  "title": "Factorio Trace",
+  "author": "Digital Surface Labs",
+  "factorio_version": "2.0",
+  "description": "Writes tick-aligned player and factory events for the open Factorio Trace dataset. Pairs with the OS recorder at factorio.digitalsurfacelabs.com. Does not capture raw mouse motion or OS overlays — those come from the companion recorder.",
+  "homepage": "https://factorio.digitalsurfacelabs.com"
+}

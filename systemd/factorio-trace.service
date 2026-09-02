@@ -1,0 +1,16 @@
+[Unit]
+Description=Factorio Trace dataset
+After=network.target
+
+[Service]
+Type=simple
+User=atlas
+WorkingDirectory=/ssd/factorio-trace
+Environment=FACTORIO_TRACE_DATA=/ssd/factorio-trace/data
+Environment=FACTORIO_TRACE_TOKEN=nauvis-open-dataset
+ExecStart=/ssd/factorio-trace/.venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 8125
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
