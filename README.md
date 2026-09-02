@@ -42,7 +42,20 @@ On macOS grant **Screen Recording** and **Accessibility** to Terminal (or iTerm)
 
 Windows is the same CLI. Linux needs `xdotool`.
 
-Local sessions land in `~/.factorio-trace/sessions/`. Uploads go to the public dataset (CC BY 4.0). Code is MIT.
+Local sessions land in `~/.factorio-trace/sessions/` (`%USERPROFILE%\.factorio-trace\sessions` on Windows). Uploads go to the public dataset (CC BY 4.0). Code is MIT.
+
+## Training loop (joystick → shadow → cut the wires)
+
+Same shape as the arcade Screen-Self-Driving eval, and the primate BMI setup: collect play, train a decoder, score it while the human still drives, then disconnect the human's input and see whether the decoder still plays.
+
+```bash
+factorio-trace record --contributor joe --upload --yes          # you drive
+factorio-trace shadow --policy hold                             # you drive, net scored
+factorio-trace play --cut-wires --policy replay --from SESSION  # net drives
+factorio-trace score SESSION
+```
+
+`shadow` never injects. `play` will not inject unless you pass `--cut-wires`. Details: [docs/training-loop.md](docs/training-loop.md). Tonight only `record` is required.
 
 ## Layout
 

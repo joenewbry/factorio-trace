@@ -1,26 +1,50 @@
-"""Main record loop: Factorio-focus gated screen + HID."""
+"""Main loop: record, shadow (wires still connected), or closed-loop (wires cut)."""
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
+from factorio_trace.actions import CLOSED_LOOP, RECORD, HumanState
 from factorio_trace.coords import WindowBounds
 from factorio_trace.detect import factorio_window, frontmost_app
+from factorio_trace.drift import compute_drift, summarize_drift
 from factorio_trace.grab import grab_window
 from factorio_trace.inputlog import InputTap
 from factorio_trace.modsync import copy_mod_sidecar, read_active_tick
+from factorio_trace.policy import Policy
 from factorio_trace.session import SessionWriter
 from factorio_trace.video import VideoWriter
 
 
 class Recorder:
-    def __init__(self, out_dir: Path, *, fps: int = 30, contributor: str = ""):
-        self.session = SessionWriter(out_dir, contributor=contributor, fps=fps)
+    def __init__(
+        self,
+        out_dir: Path,
+        *,
+        fps: int = 30,
+        contributor: str = "",
+        mode: str = RECORD,
+        policy: Policy | None = None,
+    ):
+        self.mode = mode
+        self.policy = policy
+        self.session = SessionWriter(
+            out_dir,
+            contributor=contributor,
+            fps=fps,
+            mode=mode,
+            policy_name=policy.name if policy else "",
+        )
         self.fps = fps
         self.video: VideoWriter | None = None
         self._bounds: WindowBounds | None = None
         self._running = True
+        self.human = HumanState()
+        self._injecting = False
+        self._injector = None
+        self._drift_rows: list[dict] = []
+        self._hud_at = 0.0
         self._tap = InputTap(
             emit=self._on_input,
             bounds=lambda: self._bounds,
@@ -31,9 +55,17 @@ class Recorder:
         self._running = False
 
     def run(self) -> Path:
-        print(f"session {self.session.id}")
+        print(f"session {self.session.id}  mode={self.mode}")
+        if self.mode == RECORD:
+            print("joystick connected — you play, we record.")
+        elif self.mode == SHADOW:
+            print("joystick connected — you play. policy predicts. drift is scored. nothing is injected.")
+        elif self.mode == CLOSED_LOOP:
+            print("wires cut — policy drives mouse/keys. your HID is logged as intent only.")
+            from factorio_trace.inject import Injector
+
+            self._injector = Injector()
         print("waiting for Factorio to be the active application…")
-        print("input is discarded unless Factorio is frontmost.")
         print("Ctrl+C to stop.\n")
         self._tap.start()
         frame_dt = 1.0 / max(1, self.fps)
@@ -54,12 +86,15 @@ class Recorder:
             print("\nstopping…")
         finally:
             self._tap.stop()
+            if self._injector is not None:
+                self._injector.release_all()
             if self.video is not None:
                 self.video.close()
             sidecar = copy_mod_sidecar(self.session.dir)
             extra = {
                 "mod_sidecar": sidecar,
                 "video": "video.mp4" if (self.session.dir / "video.mp4").exists() else None,
+                "drift": summarize_drift(self._drift_rows) if self._drift_rows else None,
             }
             self.session.close()
             self.session.write_manifest(extra)
@@ -67,15 +102,28 @@ class Recorder:
             print(
                 f"  frames={self.session.n_frames}  "
                 f"events={self.session.n_input}  "
+                f"predicted={self.session.n_predicted}  "
                 f"active_s={self.session.active_ms/1000:.1f}  "
                 f"mod_events={sidecar.get('events', 0)}"
             )
+            if extra["drift"]:
+                d = extra["drift"]
+                print(
+                    f"  drift mouse_mean={d['mouse_mean']}  "
+                    f"key_agree={d['key_agree_mean']}"
+                )
         return self.session.dir
 
     def _on_input(self, payload: dict) -> None:
         if not self.session.focused:
             return
-        self.session.event(payload)
+        if self._injecting:
+            return
+        self.human.apply(payload)
+        if self.mode == CLOSED_LOOP:
+            self.session.intent(payload)
+        else:
+            self.session.event(payload)
 
     def _tick(self) -> None:
         app = frontmost_app()
@@ -94,7 +142,7 @@ class Recorder:
         self._bounds = bounds
         if not self.session.focused:
             self.session.resume(app.name, bounds)
-            print(f"recording — {app.name} {int(bounds.width)}x{int(bounds.height)}")
+            print(f"{self.mode} — {app.name} {int(bounds.width)}x{int(bounds.height)}")
         shot = grab_window(bounds)
         if shot is None:
             return
@@ -108,4 +156,29 @@ class Recorder:
         except RuntimeError as exc:
             print(f"encoder: {exc}")
             return
-        self.session.frame(self.video.frames - 1)
+        frame_i = self.video.frames - 1
+        self.session.frame(frame_i)
+        if self.policy is None:
+            return
+        pred = self.policy.predict(self.human, frame_i)
+        self.session.predicted({"i": frame_i, **pred.as_dict()})
+        row = compute_drift(self.human, pred)
+        row["i"] = frame_i
+        self.session.drift(row)
+        self._drift_rows.append(row)
+        if self.mode == CLOSED_LOOP and self._injector is not None:
+            self._injecting = True
+            try:
+                self._injector.apply(pred, bounds)
+            finally:
+                self._injecting = False
+        now = time.monotonic()
+        if now - self._hud_at >= 1.0:
+            self._hud_at = now
+            mouse = row.get("mouse")
+            mouse_s = "n/a" if mouse is None else f"{mouse:.3f}"
+            print(
+                f"\r{self.mode}  mouse_delta {mouse_s}  keys {row['key_agree']:.2f}  frame {frame_i}   ",
+                end="",
+                flush=True,
+            )

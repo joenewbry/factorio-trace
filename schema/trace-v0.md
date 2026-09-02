@@ -7,7 +7,10 @@ A session is a directory:
   manifest.json
   video.mp4          # H.264, Factorio window only, focused segments concatenated
   frames.jsonl       # video frame index → wall t_ms
-  input.jsonl        # HID events, Factorio-focus gated
+  input.jsonl        # HID that actually drove the game (human in record/shadow)
+  intent.jsonl       # human HID during closed-loop (wires cut; not executed)
+  predicted.jsonl    # policy outputs (shadow / play)
+  drift.jsonl        # per-frame mouse Δ and key agreement
   anchors.jsonl      # wall t_ms ↔ game tick (when the Lua mod is installed)
   game.jsonl         # optional Lua sidecar
 ```

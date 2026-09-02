@@ -24,22 +24,33 @@ class SessionWriter:
         *,
         contributor: str = "",
         fps: int = 30,
+        mode: str = "record",
+        policy_name: str = "",
     ):
         self.id = new_session_id()
         self.dir = Path(root) / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
         self.fps = fps
         self.contributor = contributor
+        self.mode = mode
+        self.policy_name = policy_name
         self.t0_ns = time.time_ns()
         self.input_path = self.dir / "input.jsonl"
         self.frames_path = self.dir / "frames.jsonl"
         self.anchors_path = self.dir / "anchors.jsonl"
+        self.predicted_path = self.dir / "predicted.jsonl"
+        self.drift_path = self.dir / "drift.jsonl"
+        self.intent_path = self.dir / "intent.jsonl"
         self._input = self.input_path.open("a", encoding="utf-8")
         self._frames = self.frames_path.open("a", encoding="utf-8")
         self._anchors = self.anchors_path.open("a", encoding="utf-8")
+        self._predicted = self.predicted_path.open("a", encoding="utf-8")
+        self._drift = self.drift_path.open("a", encoding="utf-8")
+        self._intent = self.intent_path.open("a", encoding="utf-8")
         self.n_input = 0
         self.n_frames = 0
         self.n_pauses = 0
+        self.n_predicted = 0
         self.active_ms = 0
         self._last_resume_ms: int | None = None
         self.bounds: WindowBounds | None = None
@@ -63,6 +74,19 @@ class SessionWriter:
     def anchor(self, game_tick: int) -> None:
         line = {"t_ms": self.now_ms(), "game_tick": int(game_tick)}
         self._anchors.write(json.dumps(line, separators=(",", ":")) + "\n")
+
+    def predicted(self, payload: dict) -> None:
+        payload.setdefault("t_ms", self.now_ms())
+        self._predicted.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        self.n_predicted += 1
+
+    def drift(self, payload: dict) -> None:
+        payload.setdefault("t_ms", self.now_ms())
+        self._drift.write(json.dumps(payload, separators=(",", ":")) + "\n")
+
+    def intent(self, payload: dict) -> None:
+        payload.setdefault("t_ms", self.now_ms())
+        self._intent.write(json.dumps(payload, separators=(",", ":")) + "\n")
 
     def resume(self, app: str, bounds: WindowBounds) -> None:
         self.bounds = bounds
@@ -107,10 +131,19 @@ class SessionWriter:
             "active_ms": self.active_ms,
             "duration_ms": self.now_ms(),
             "license": "CC-BY-4.0",
+            "mode": self.mode,
+            "policy": self.policy_name or None,
+            "predicted_events": self.n_predicted,
             "capture": {
                 "pixels": "factorio-window",
                 "input": "os-hid-gated-on-factorio-focus",
                 "game_state": "factorio-mod-optional",
+                "intent": "human-hid" if self.mode in {"shadow", "closed_loop"} else "human-hid-is-control",
+                "executed": (
+                    "policy-inject"
+                    if self.mode == "closed_loop"
+                    else "human-hid"
+                ),
             },
         }
         if extra:
@@ -120,7 +153,7 @@ class SessionWriter:
 
     def close(self) -> None:
         self.pause("session_stop")
-        for fh in (self._input, self._frames, self._anchors):
+        for fh in (self._input, self._frames, self._anchors, self._predicted, self._drift, self._intent):
             try:
                 fh.flush()
                 fh.close()
